@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mukono Navigator</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Barlow:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed map with a survey-sheet control panel on the left (bottom sheet on phones). */
+:root{
+  --ink:#0f1a17;        /* panel ground */
+  --ink-2:#17251f;      /* raised rows */
+  --line:#2b3d35;
+  --text:#e7efe9;
+  --muted:#93a89d;
+  --accent:#ff7a2f;     /* survey-marker orange */
+  --route:#2f7dff;
+  --ok:#3ecf8e; --warn:#f5b73b; --bad:#ff5c5c;
+  --display:"Barlow Semi Condensed",system-ui,sans-serif;
+  --body:"Barlow",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--ink);color:var(--text);font:15px/1.4 var(--body)}
+#map{position:absolute;inset:0;background:#cfd8d2}
+#grid{position:absolute;inset:0;z-index:450;pointer-events:none}
+#panel{position:absolute;z-index:1000;top:12px;left:12px;bottom:12px;width:360px;max-width:calc(100% - 24px);
+  background:var(--ink);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 10px 40px rgba(0,0,0,.35)}
+header{padding:14px 16px 10px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+h1{font:700 22px var(--display);letter-spacing:.02em;margin:0;text-transform:uppercase}
+h1 span{color:var(--accent)}
+.status{font:400 11px var(--mono);color:var(--muted)}
+.scroll{overflow-y:auto;padding:12px 16px 16px;display:flex;flex-direction:column;gap:16px;min-height:0}
+section{display:flex;flex-direction:column;gap:8px;min-width:0}
+h2{font:600 12px var(--display);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0}
+label{font-size:12px;color:var(--muted)}
+input,select,button{font:inherit;color:var(--text)}
+input[type=text],input[type=password],select{width:100%;background:var(--ink-2);border:1px solid var(--line);border-radius:6px;padding:9px 10px;min-width:0}
+input.mono{font-family:var(--mono);font-size:13px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.row{display:flex;gap:8px;align-items:stretch}
+.row>*{min-width:0}
+.row input{flex:1}
+button{background:var(--ink-2);border:1px solid var(--line);border-radius:6px;padding:9px 12px;cursor:pointer;white-space:nowrap}
+button:hover{border-color:var(--muted)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#1b0f06;font-weight:600}
+button.on{border-color:var(--ok);color:var(--ok)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chips button{padding:6px 10px;font-size:13px}
+.readout{font:400 13px var(--mono);background:var(--ink-2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;display:grid;grid-template-columns:auto 1fr;gap:2px 12px}
+.readout b{color:var(--muted);font-weight:400}
+.msg{font-size:13px;color:var(--muted)}
+.msg.err{color:var(--bad)} .msg.ok{color:var(--ok)}
+.routes{display:flex;flex-direction:column;gap:6px}
+.route{background:var(--ink-2);border:1px solid var(--line);border-left:4px solid var(--route);border-radius:6px;padding:8px 10px;cursor:pointer;text-align:left}
+.route.sel{border-color:var(--route);background:#14243d}
+.route .big{font:700 18px var(--display)}
+.route .via{font-size:13px;color:var(--muted)}
+ol.steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;font-size:13px;max-height:220px;overflow:auto}
+ol.steps li{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line);padding:4px 0}
+ol.steps span:last-child{font-family:var(--mono);color:var(--muted);white-space:nowrap}
+.hits{display:flex;flex-direction:column;gap:4px}
+.hits button{text-align:left;white-space:normal;font-size:13px}
+.legend{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:22px;height:6px;border-radius:3px}
+#sheetBtn{display:none}
+.leaflet-popup-content{font:400 13px/1.4 var(--body);margin:10px 12px}
+.leaflet-popup-content .mono{font-family:var(--mono);font-size:12px}
+.leaflet-popup-content button{margin:6px 6px 0 0;color:#111;background:#f2f2f2;border-color:#ccc;padding:5px 8px;font-size:12px}
+.gpsdot{width:16px;height:16px;border-radius:50%;background:var(--route);border:3px solid #fff;box-shadow:0 0 0 2px var(--route)}
+@media (max-width:720px){
+  #panel{top:auto;left:0;right:0;bottom:0;width:auto;max-width:none;height:52vh;border-radius:14px 14px 0 0;padding-bottom:env(safe-area-inset-bottom,0)}
+  #panel.min{height:auto}
+  #panel.min .scroll{display:none}
+  #sheetBtn{display:inline-block;padding:4px 10px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="map" aria-label="Map of Mukono"></div>
+<canvas id="grid"></canvas>
+
+<aside id="panel">
+  <header>
+    <h1>Mukono <span>Navigator</span></h1>
+    <span class="status" id="cursor">0.3533, 32.7553</span>
+    <button id="sheetBtn" aria-label="Show or hide panel">Panel</button>
+  </header>
+  <div class="scroll">
+
+    <section>
+      <h2>Go to coordinates</h2>
+      <label for="coordIn">Latitude, Longitude (decimal or degrees) or local x, y in metres</label>
+      <input id="coordIn" class="mono" type="text" value="0.3533, 32.7553" inputmode="text" autocomplete="off">
+      <div class="row">
+        <select id="coordMode" aria-label="Coordinate type">
+          <option value="ll">Lat, Lon (WGS84)</option>
+          <option value="xy">Local x, y (m)</option>
+        </select>
+        <button class="primary" id="goBtn">Find point</button>
+      </div>
+      <div class="msg" id="goMsg"></div>
+    </section>
+
+    <section>
+      <h2>Search a place</h2>
+      <div class="row"><input id="q" type="text" placeholder="e.g. Mukono Town, Seeta, Namanve" autocomplete="off"><button id="qBtn">Search</button></div>
+      <div class="hits" id="hits"></div>
+    </section>
+
+    <section>
+      <h2>My location (GPS)</h2>
+      <div class="row">
+        <button id="gpsBtn" class="primary">Start GPS</button>
+        <button id="followBtn" disabled>Follow me</button>
+      </div>
+      <div class="msg" id="gpsMsg">GPS is off.</div>
+    </section>
+
+    <section>
+      <h2>Route</h2>
+      <div class="readout">
+        <b>From</b><span id="fromTxt">not set</span>
+        <b>To</b><span id="toTxt">not set</span>
+      </div>
+      <div class="row">
+        <button id="routeBtn" class="primary">Get roads</button>
+        <button id="clearBtn">Clear</button>
+      </div>
+      <div class="msg" id="routeMsg">Tap the map and choose "Set as destination". The start is your GPS position, or tap "Set as start".</div>
+      <div class="routes" id="routes"></div>
+      <ol class="steps" id="steps"></ol>
+    </section>
+
+    <section>
+      <h2>Map and grid</h2>
+      <label for="base">Base map</label>
+      <select id="base">
+        <option value="osm">Streets (OpenStreetMap)</option>
+        <option value="hot">Humanitarian (clear roads)</option>
+        <option value="sat">Satellite</option>
+      </select>
+      <label for="gridMode">Coordinate grid</label>
+      <select id="gridMode">
+        <option value="xy">Cartesian x, y (metres from Mukono centre)</option>
+        <option value="ll">Latitude / Longitude</option>
+        <option value="off">Off</option>
+      </select>
+      <div class="chips"><button id="bndBtn" class="on">District boundary</button></div>
+    </section>
+
+    <section>
+      <h2>Live road conditions</h2>
+      <label for="ttKey">TomTom API key (free at developer.tomtom.com)</label>
+      <input id="ttKey" class="mono" type="password" placeholder="paste key to turn on live traffic" autocomplete="off">
+      <div class="chips">
+        <button id="flowBtn">Traffic flow</button>
+        <button id="incBtn">Incidents</button>
+      </div>
+      <div class="legend"><span><i style="background:#3ecf8e"></i>Free</span><span><i style="background:#f5b73b"></i>Slow</span><span><i style="background:#ff5c5c"></i>Jam</span></div>
+      <div class="msg" id="ttMsg">Refreshes every 60 seconds while on.</div>
+    </section>
+
+  </div>
+</aside>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const O={lat:0.3533,lng:32.7553};               // local origin: Mukono town centre
+const KX=111320*Math.cos(O.lat*Math.PI/180), KY=110574; // metres per degree
+const toXY=(lat,lng)=>({x:(lng-O.lng)*KX,y:(lat-O.lat)*KY});
+const fromXY=(x,y)=>({lat:O.lat+y/KY,lng:O.lng+x/KX});
+const fmt=(n,d=5)=>n.toFixed(d);
+const store={get(k){try{return localStorage.getItem(k)||""}catch(e){return ""}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+
+/* ---------- Map ---------- */
+const map=L.map("map",{center:[O.lat,O.lng],zoom:13,zoomControl:false});
+L.control.zoom({position:"topright"}).addTo(map);
+L.control.scale({position:"bottomright",imperial:false}).addTo(map);
+const bases={
+  osm:L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap contributors"}),
+  hot:L.tileLayer("https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap contributors, HOT"}),
+  sat:L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:19,attribution:"Imagery &copy; Esri"})
+};
+let base=bases.osm.addTo(map);
+$("base").onchange=e=>{map.removeLayer(base);base=bases[e.target.value].addTo(map);base.bringToBack()};
+
+/* ---------- District boundary (real polygon from OpenStreetMap, bbox fallback) ---------- */
+let boundary=null,bndOn=true;
+const bboxFallback=L.rectangle([[0.05,32.55],[0.62,33.20]],{color:"#ff7a2f",weight:2,dashArray:"6 6",fill:false});
+async function loadBoundary(){
+  try{
+    const r=await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&polygon_geojson=1&limit=1&countrycodes=ug&q=Mukono%20District");
+    const j=await r.json();
+    if(j[0]&&j[0].geojson&&/Polygon/.test(j[0].geojson.type)){
+      boundary=L.geoJSON(j[0].geojson,{style:{color:"#ff7a2f",weight:3,dashArray:"8 6",fillOpacity:0.04}});
+    }
+  }catch(e){}
+  if(!boundary) boundary=bboxFallback;
+  if(bndOn) boundary.addTo(map);
+}
+loadBoundary();
+$("bndBtn").onclick=()=>{bndOn=!bndOn;$("bndBtn").classList.toggle("on",bndOn);if(!boundary)return;bndOn?boundary.addTo(map):map.removeLayer(boundary)};
+
+/* ---------- Cartesian / lat-lon grid on a canvas ---------- */
+const cv=$("grid"),ctx=cv.getContext("2d");
+let gridMode="xy";
+function sizeCanvas(){
+  const d=window.devicePixelRatio||1,s=map.getSize();
+  cv.width=s.x*d;cv.height=s.y*d;cv.style.width=s.x+"px";cv.style.height=s.y+"px";ctx.setTransform(d,0,0,d,0,0);
+}
+function pickStep(steps,pxPerUnit){return steps.find(s=>s*pxPerUnit>=90)||steps[steps.length-1]}
+function drawGrid(){
+  const s=map.getSize();ctx.clearRect(0,0,s.x,s.y);
+  if(gridMode==="off")return;
+  const b=map.getBounds(),z=map.getZoom(),c=map.getCenter();
+  const xy=gridMode==="xy";
+  let fx,fy,x0,x1,y0,y1,step,major,unit;
+  if(xy){
+    const mpp=40075016.686*Math.cos(c.lat*Math.PI/180)/(256*Math.pow(2,z));
+    step=pickStep([50,100,200,500,1000,2000,5000,10000,20000,50000],1/mpp);
+    const a=toXY(b.getSouth(),b.getWest()),d=toXY(b.getNorth(),b.getEast());
+    x0=a.x;x1=d.x;y0=a.y;y1=d.y;
+    fx=v=>O.lng+v/KX;fy=v=>O.lat+v/KY;unit="m";
+  }else{
+    const ppd=256*Math.pow(2,z)/360;
+    step=pickStep([0.0005,0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1],ppd);
+    x0=b.getWest();x1=b.getEast();y0=b.getSouth();y1=b.getNorth();
+    fx=v=>v;fy=v=>v;unit="°";
+  }
+  const dec=xy?0:(step<0.001?4:step<0.01?3:2);
+  ctx.font="11px "+getComputedStyle(document.documentElement).getPropertyValue("--mono");
+  const line=(x1_,y1_,x2_,y2_,w,col)=>{ctx.beginPath();ctx.moveTo(x1_,y1_);ctx.lineTo(x2_,y2_);ctx.lineWidth=w;ctx.strokeStyle=col;ctx.stroke()};
+  const label=(t,x,y,align)=>{ctx.textAlign=align;ctx.lineWidth=3;ctx.strokeStyle="rgba(255,255,255,.9)";ctx.strokeText(t,x,y);ctx.fillStyle="#12302a";ctx.fillText(t,x,y)};
+  const nx0=Math.floor(x0/step),nx1=Math.ceil(x1/step),ny0=Math.floor(y0/step),ny1=Math.ceil(y1/step);
+  if((nx1-nx0)>200||(ny1-ny0)>200)return;
+  for(let i=nx0;i<=nx1;i++){
+    const v=i*step,p=map.latLngToContainerPoint([c.lat,fx(v)]);
+    const axis=xy&&i===0,mj=i%5===0;
+    line(p.x,0,p.x,s.y,axis?2.5:mj?1.2:.6,axis?"#d6336c":mj?"rgba(18,48,42,.65)":"rgba(18,48,42,.35)");
+    if(!axis||true)label((xy?v.toFixed(0):v.toFixed(dec))+(xy?"":""),p.x+3,s.y-6,"left");
+  }
+  for(let j=ny0;j<=ny1;j++){
+    const v=j*step,p=map.latLngToContainerPoint([fy(v),c.lng]);
+    const axis=xy&&j===0,mj=j%5===0;
+    line(0,p.y,s.x,p.y,axis?2.5:mj?1.2:.6,axis?"#d6336c":mj?"rgba(18,48,42,.65)":"rgba(18,48,42,.35)");
+    label((xy?v.toFixed(0):v.toFixed(dec)),4,p.y-3,"left");
+  }
+  label(xy?"x (m east) →":"longitude →",s.x-8,s.y-22,"right");
+  label(xy?"y (m north) ↑":"latitude ↑",s.x-8,16,"right");
+  label("grid "+(xy?(step>=1000?step/1000+" km":step+" m"):step+"°"),s.x-8,32,"right");
+  if(xy){const o=map.latLngToContainerPoint([O.lat,O.lng]);
+    ctx.beginPath();ctx.arc(o.x,o.y,5,0,7);ctx.fillStyle="#d6336c";ctx.fill();label("(0, 0) Mukono centre",o.x+8,o.y-8,"left");}
+}
+$("gridMode").onchange=e=>{gridMode=e.target.value;drawGrid()};
+map.on("move zoom resize moveend",drawGrid);
+window.addEventListener("resize",()=>{sizeCanvas();drawGrid()});
+sizeCanvas();drawGrid();
+
+/* ---------- Live cursor coordinates ---------- */
+map.on("mousemove",e=>{const p=toXY(e.latlng.lat,e.latlng.lng);
+  $("cursor").textContent=fmt(e.latlng.lat)+", "+fmt(e.latlng.lng)+"  |  x "+p.x.toFixed(0)+" y "+p.y.toFixed(0)});
+
+/* ---------- Points, popups ---------- */
+let state={from:null,to:null,gps:null,gpsIsFrom:true};
+let markerFrom=null,markerTo=null,pinMarker=null;
+const pinIcon=L.divIcon({className:"",html:'<div style="width:18px;height:18px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:#ff7a2f;border:2px solid #fff;box-shadow:0 1px 4px #0006"></div>',iconSize:[18,18],iconAnchor:[9,18]});
+const letterIcon=(t,col)=>L.divIcon({className:"",html:'<div style="width:24px;height:24px;border-radius:50%;background:'+col+';color:#fff;border:2px solid #fff;font:700 13px/20px sans-serif;text-align:center;box-shadow:0 1px 4px #0006">'+t+'</div>',iconSize:[24,24],iconAnchor:[12,12]});
+function coordHTML(lat,lng){const p=toXY(lat,lng);
+  return '<div class="mono">Lat '+fmt(lat)+'<br>Lon '+fmt(lng)+'<br>x '+p.x.toFixed(0)+' m, y '+p.y.toFixed(0)+' m</div><div id="rev" class="msg">Looking up place name…</div>'+
+   '<button data-a="start">Set as start</button><button data-a="dest">Set as destination</button><button data-a="copy">Copy</button>';
+}
+async function reverse(lat,lng){
+  try{const r=await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&lat="+lat+"&lon="+lng);
+    const j=await r.json();return j.display_name||"No name on the map for this point";}catch(e){return "Place name unavailable offline"}
+}
+function showPoint(lat,lng,pan=true){
+  if(pinMarker)map.removeLayer(pinMarker);
+  pinMarker=L.marker([lat,lng],{icon:pinIcon}).addTo(map).bindPopup(coordHTML(lat,lng),{maxWidth:280}).openPopup();
+  if(pan)map.flyTo([lat,lng],Math.max(map.getZoom(),16),{duration:.8});
+  reverse(lat,lng).then(t=>{const el=document.getElementById("rev");if(el)el.textContent=t});
+  pinMarker._ll={lat,lng};
+  setTimeout(drawGrid,900);
+}
+map.on("click",e=>showPoint(e.latlng.lat,e.latlng.lng,false));
+document.addEventListener("click",e=>{
+  const a=e.target.dataset&&e.target.dataset.a;if(!a||!pinMarker)return;
+  const ll=pinMarker._ll;
+  if(a==="start")setFrom(ll);
+  if(a==="dest")setTo(ll);
+  if(a==="copy"){const t=fmt(ll.lat)+", "+fmt(ll.lng);navigator.clipboard&&navigator.clipboard.writeText(t).catch(()=>{});}
+  map.closePopup();
+});
+function setFrom(ll,fromGps){state.from=ll;state.gpsIsFrom=!!fromGps;
+  if(markerFrom)map.removeLayer(markerFrom);markerFrom=L.marker([ll.lat,ll.lng],{icon:letterIcon("A","#2f7dff")}).addTo(map);
+  $("fromTxt").textContent=fromGps?"My GPS location":fmt(ll.lat,4)+", "+fmt(ll.lng,4);}
+function setTo(ll){state.to=ll;
+  if(markerTo)map.removeLayer(markerTo);markerTo=L.marker([ll.lat,ll.lng],{icon:letterIcon("B","#ff7a2f")}).addTo(map);
+  $("toTxt").textContent=fmt(ll.lat,4)+", "+fmt(ll.lng,4);
+  if(state.from)getRoute();}
+
+/* ---------- Coordinate input ---------- */
+function parseLatLng(str){
+  const re=/(-?\d+(?:\.\d+)?)\s*(?:°\s*(?:(\d+(?:\.\d+)?)\s*['′]\s*)?(?:(\d+(?:\.\d+)?)\s*["″]\s*)?)?([NSEWnsew])?/g;
+  const out=[];let m;
+  while((m=re.exec(str))&&out.length<2){
+    let v=Math.abs(parseFloat(m[1]))+(m[2]?parseFloat(m[2])/60:0)+(m[3]?parseFloat(m[3])/3600:0);
+    if(parseFloat(m[1])<0||(m[1].startsWith("-")))v=-v;
+    const h=(m[4]||"").toUpperCase();if(h==="S"||h==="W")v=-Math.abs(v);
+    out.push({v,h});
+  }
+  if(out.length<2)return null;
+  let [a,b]=out;
+  if(a.h==="E"||a.h==="W"||b.h==="N"||b.h==="S")[a,b]=[b,a];
+  return {lat:a.v,lng:b.v};
+}
+function go(){
+  const msg=$("goMsg");msg.className="msg";
+  const txt=$("coordIn").value.trim();
+  let ll=null;
+  if($("coordMode").value==="xy"){
+    const n=txt.match(/-?\d+(?:\.\d+)?/g);
+    if(n&&n.length>=2)ll=fromXY(parseFloat(n[0]),parseFloat(n[1]));
+  }else ll=parseLatLng(txt);
+  if(!ll||Math.abs(ll.lat)>90||Math.abs(ll.lng)>180){msg.textContent="Enter two numbers, for example 0.3533, 32.7553";msg.className="msg err";return}
+  showPoint(ll.lat,ll.lng);
+  const inside=boundary&&boundary.getBounds&&boundary.getBounds().contains([ll.lat,ll.lng]);
+  msg.textContent=inside?"Inside the Mukono area.":"This point is outside the Mukono district boundary.";
+  msg.className="msg "+(inside?"ok":"err");
+}
+$("goBtn").onclick=go;
+$("coordIn").addEventListener("keydown",e=>{if(e.key==="Enter")go()});
+
+/* ---------- Place search (Nominatim, limited to the Mukono area) ---------- */
+async function search(){
+  const q=$("q").value.trim();if(!q)return;
+  const box=$("hits");box.innerHTML='<div class="msg">Searching…</div>';
+  try{
+    const r=await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&countrycodes=ug&viewbox=32.50,0.65,33.25,0.00&bounded=1&q="+encodeURIComponent(q));
+    const j=await r.json();box.innerHTML="";
+    if(!j.length){box.innerHTML='<div class="msg">No match inside Mukono. Try another spelling.</div>';return}
+    j.forEach(h=>{const b=document.createElement("button");b.textContent=h.display_name;
+      b.onclick=()=>{$("coordIn").value=fmt(+h.lat)+", "+fmt(+h.lon);$("coordMode").value="ll";showPoint(+h.lat,+h.lon)};box.appendChild(b)});
+  }catch(e){box.innerHTML='<div class="msg err">Search needs an internet connection.</div>'}
+}
+$("qBtn").onclick=search;
+$("q").addEventListener("keydown",e=>{if(e.key==="Enter")search()});
+
+/* ---------- GPS ---------- */
+let watchId=null,gpsMarker=null,accCircle=null,follow=false;
+$("gpsBtn").onclick=()=>{
+  if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;$("gpsBtn").textContent="Start GPS";$("gpsMsg").textContent="GPS is off.";$("followBtn").disabled=true;return}
+  if(!navigator.geolocation){$("gpsMsg").textContent="This browser has no GPS support.";$("gpsMsg").className="msg err";return}
+  $("gpsMsg").textContent="Waiting for a GPS fix…";$("gpsMsg").className="msg";
+  let first=true;
+  watchId=navigator.geolocation.watchPosition(pos=>{
+    const ll={lat:pos.coords.latitude,lng:pos.coords.longitude},acc=pos.coords.accuracy;
+    state.gps=ll;
+    if(!gpsMarker){gpsMarker=L.marker([ll.lat,ll.lng],{icon:L.divIcon({className:"",html:'<div class="gpsdot"></div>',iconSize:[16,16],iconAnchor:[8,8]}),zIndexOffset:1000}).addTo(map);
+      accCircle=L.circle([ll.lat,ll.lng],{radius:acc,color:"#2f7dff",weight:1,fillOpacity:.12}).addTo(map)}
+    else{gpsMarker.setLatLng([ll.lat,ll.lng]);accCircle.setLatLng([ll.lat,ll.lng]).setRadius(acc)}
+    const p=toXY(ll.lat,ll.lng);
+    $("gpsMsg").className="msg ok";
+    $("gpsMsg").textContent="You: "+fmt(ll.lat)+", "+fmt(ll.lng)+" (x "+p.x.toFixed(0)+", y "+p.y.toFixed(0)+") ±"+Math.round(acc)+" m";
+    $("gpsBtn").textContent="Stop GPS";$("followBtn").disabled=false;
+    if(first){map.flyTo([ll.lat,ll.lng],16);first=false}
+    else if(follow)map.panTo([ll.lat,ll.lng]);
+    if(state.gpsIsFrom||!state.from){const had=!!state.from;setFrom(ll,true);if(!had&&state.to)getRoute()}
+  },err=>{
+    $("gpsMsg").className="msg err";
+    $("gpsMsg").textContent=err.code===1?"Location permission was denied. Allow it in your browser settings.":"Could not get a GPS fix. Try outdoors and use https or localhost.";
+    watchId=null;$("gpsBtn").textContent="Start GPS";
+  },{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
+};
+$("followBtn").onclick=()=>{follow=!follow;$("followBtn").classList.toggle("on",follow);if(follow&&state.gps)map.panTo([state.gps.lat,state.gps.lng])};
+
+/* ---------- Routing (OSRM, driving roads from OpenStreetMap) ---------- */
+let routeLayers=[],routeData=[],selRoute=0;
+const dist=m=>m>=1000?(m/1000).toFixed(1)+" km":Math.round(m)+" m";
+const dur=s=>{const m=Math.round(s/60);return m<60?m+" min":Math.floor(m/60)+" h "+(m%60)+" min"};
+async function getRoute(){
+  const rm=$("routeMsg");rm.className="msg";
+  if(!state.to){rm.textContent="Set a destination first.";return}
+  if(!state.from){rm.textContent="Start GPS or tap a point and choose Set as start.";return}
+  rm.textContent="Finding roads…";
+  const f=state.from,t=state.to;
+  try{
+    const u="https://router.project-osrm.org/route/v1/driving/"+f.lng+","+f.lat+";"+t.lng+","+t.lat+"?overview=full&geometries=geojson&steps=true&alternatives=true";
+    const r=await fetch(u);const j=await r.json();
+    if(j.code!=="Ok")throw new Error(j.message||j.code);
+    routeData=j.routes;rm.textContent=routeData.length+" road option"+(routeData.length>1?"s":"")+" found. Times assume free-flowing traffic.";
+    drawRoutes(0);
+  }catch(e){rm.className="msg err";rm.textContent="No road route found ("+e.message+"). Check both points are near a road and you are online."}
+}
+function drawRoutes(sel){
+  selRoute=sel;routeLayers.forEach(l=>map.removeLayer(l));routeLayers=[];
+  routeData.forEach((rt,i)=>{
+    const l=L.geoJSON(rt.geometry,{style:{color:i===sel?"#2f7dff":"#7a9cc9",weight:i===sel?7:5,opacity:i===sel?.95:.6}}).addTo(map);
+    l.on("click",()=>drawRoutes(i));routeLayers.push(l);
+    if(i===sel)l.bringToFront();
+  });
+  routeLayers[sel]&&map.fitBounds(routeLayers[sel].getBounds(),{padding:[50,50]});
+  const box=$("routes");box.innerHTML="";
+  routeData.forEach((rt,i)=>{
+    const names=[];rt.legs[0].steps.forEach(s=>{if(s.name&&!names.includes(s.name)&&s.distance>150)names.push(s.name)});
+    const b=document.createElement("button");b.className="route"+(i===sel?" sel":"");
+    b.innerHTML='<div class="big">'+dur(rt.duration)+' · '+dist(rt.distance)+'</div><div class="via">via '+(names.slice(0,4).join(", ")||"local roads")+'</div>';
+    b.onclick=()=>drawRoutes(i);box.appendChild(b);
+  });
+  const ol=$("steps");ol.innerHTML="";
+  routeData[sel].legs[0].steps.forEach(s=>{
+    const m=s.maneuver,li=document.createElement("li");
+    const verb=m.type==="depart"?"Start":m.type==="arrive"?"Arrive":(m.modifier?m.modifier.replace(/^./,c=>c.toUpperCase())+" turn":"Continue");
+    li.innerHTML='<span>'+verb+(s.name?' on <b>'+s.name.replace(/</g,"&lt;")+'</b>':'')+'</span><span>'+dist(s.distance)+'</span>';
+    ol.appendChild(li);
+  });
+}
+$("routeBtn").onclick=getRoute;
+$("clearBtn").onclick=()=>{routeLayers.forEach(l=>map.removeLayer(l));routeLayers=[];routeData=[];
+  [markerFrom,markerTo,pinMarker].forEach(m=>m&&map.removeLayer(m));markerFrom=markerTo=pinMarker=null;
+  state.from=null;state.to=null;state.gpsIsFrom=true;$("fromTxt").textContent="not set";$("toTxt").textContent="not set";
+  $("routes").innerHTML="";$("steps").innerHTML="";$("routeMsg").textContent="Cleared.";
+  if(state.gps)setFrom(state.gps,true)};
+
+/* ---------- Live traffic (TomTom raster tiles) ---------- */
+let flow=null,inc=null,ttTimer=null;
+const key=()=>$("ttKey").value.trim();
+$("ttKey").value=store.get("ttKey");
+function mk(kind){
+  const url=kind==="flow"
+    ?"https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key="+key()+"&t={t}"
+    :"https://api.tomtom.com/traffic/map/4/tile/incidents/s3/{z}/{x}/{y}.png?key="+key()+"&t={t}";
+  return L.tileLayer(url,{maxZoom:19,opacity:.9,t:Date.now(),zIndex:300,attribution:"Traffic &copy; TomTom"});
+}
+function toggle(kind){
+  const k=key(),msg=$("ttMsg");
+  if(!k){msg.className="msg err";msg.textContent="Paste a TomTom API key above to see live traffic.";return}
+  store.set("ttKey",k);msg.className="msg";
+  if(kind==="flow"){if(flow){map.removeLayer(flow);flow=null}else flow=mk("flow").addTo(map);$("flowBtn").classList.toggle("on",!!flow)}
+  else{if(inc){map.removeLayer(inc);inc=null}else inc=mk("inc").addTo(map);$("incBtn").classList.toggle("on",!!inc)}
+  clearInterval(ttTimer);
+  if(flow||inc){msg.textContent="Live. Updated "+new Date().toLocaleTimeString()+".";
+    ttTimer=setInterval(()=>{[flow,inc].forEach(l=>{if(l){l.options.t=Date.now();l.redraw()}});msg.textContent="Live. Updated "+new Date().toLocaleTimeString()+"."},60000)}
+  else msg.textContent="Refreshes every 60 seconds while on.";
+}
+$("flowBtn").onclick=()=>toggle("flow");
+$("incBtn").onclick=()=>toggle("inc");
+
+/* ---------- Phone panel toggle ---------- */
+$("sheetBtn").onclick=()=>$("panel").classList.toggle("min");
+
+/* start with a marked sample point so the plane is not empty */
+showPoint(O.lat,O.lng,false);
+})();
+</script>
+</body>
+</html>
